@@ -157,13 +157,24 @@ Global : Prudence sur les métaux. BTC le plus solide des trois.
 
 ### Pine Script
 
+Nouveau script :
+
 | Outil | Étape |
 |---|---|
-| `pine_set_source` | 1. Injecter le code |
-| `pine_smart_compile` | 2. Compiler |
-| `pine_get_errors` | 3. Lire les erreurs |
-| `pine_get_console` | 4. Lire les logs |
-| `pine_save` | 5. Sauvegarder dans le cloud |
+| `pine_new` (avec `source`) | 1. Créer un nouveau script sans titre (le script ouvert n'est pas touché) |
+| `pine_save` (avec `name`) | 2. Sauvegarder sous un nom (refusé si ce nom existe déjà) |
+| `pine_smart_compile` | 3. Ajouter au graphique et lire les erreurs |
+
+Modifier un script existant :
+
+| Outil | Étape |
+|---|---|
+| `pine_open` | 1. Ouvrir le script sauvegardé dans l'éditeur |
+| `pine_set_source` | 2. Remplacer le code du script **ouvert** |
+| `pine_smart_compile` (avec `allow_save: true`) | 3. Mettre à jour sur le graphique : TradingView sauvegarde alors une nouvelle version du script |
+| `pine_get_errors` / `pine_get_console` | Lire les erreurs et les logs |
+
+Les boutons sont trouvés par `data-qa-id`, donc ça marche quelle que soit la langue de l'interface. Sans `allow_save`, `pine_smart_compile` refuse de sauvegarder par-dessus un script sauvegardé ; sans `discard_unsaved`, `pine_new` et `pine_open` refusent d'abandonner des modifications non sauvegardées.
 
 ### Replay
 
