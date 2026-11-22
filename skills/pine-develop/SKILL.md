@@ -17,13 +17,14 @@ If not already clear, ask the user:
 
 ## Step 2: Pull Current Source (if modifying)
 
-If modifying an existing script:
+If modifying an existing script, open it first (`pine_open` with its name), then:
 ```bash
 node scripts/pine_pull.js
 ```
 Then read `scripts/current.pine` to understand what's there.
 
-If creating new: start from scratch.
+If creating new: start from scratch, and push with `--new` in Step 4. Never push a new script
+into whatever script happens to be open in the editor: that overwrites it once saved.
 
 ## Step 3: Write the Pine Script
 
@@ -40,18 +41,28 @@ For strategies, include:
 
 ## Step 4: Push and Compile
 
+New script (first push only):
 ```bash
-node scripts/pine_push.js
+node scripts/pine_push.js --new indicator --save "My Script Name"
 ```
+This creates a new untitled script (the open one is not touched), saves it under that name (refused if
+the name is taken), adds it to the chart and reports errors. Use `strategy` or `library` instead of
+`indicator` as needed.
 
-This injects the code into TradingView's Pine Editor, clicks compile, and reports any errors.
+Every later push (the editor now holds your script):
+```bash
+node scripts/pine_push.js --allow-save
+```
+The script prints which script it pushed into. TradingView saves a new version of a saved script each
+time it is updated on the chart, so without `--allow-save` the push stops before compiling. Only use
+`--allow-save` on the script you are developing, never on another user script.
 
 ## Step 5: Fix Errors
 
 If errors are reported:
 1. Read the error messages (line number + description)
 2. Edit `scripts/current.pine` locally — fix the specific lines
-3. Push again: `node scripts/pine_push.js`
+3. Push again: `node scripts/pine_push.js --allow-save`
 4. Repeat until 0 errors
 
 Common Pine Script errors:

@@ -22,6 +22,7 @@
 import { describe, it, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import CDP from 'chrome-remote-interface';
+import { FIND_PINE_CTRL, READ_PINE_STATE, PINE_SELECTORS, keyModifierForPlatform } from '../src/core/pine.js';
 
 let client;
 let Runtime;
@@ -735,44 +736,52 @@ describe('TradingView MCP — Full E2E (70 tools)', () => {
       }
     });
 
-    it('pine_set_source — inject code', async () => {
+    it('pine_set_source — inject code (never into a saved script; restores the original)', async (t) => {
       const ready = await ensureEditor();
       if (!ready) return;
+      // Writing into a saved script is how user scripts got overwritten; only touch untitled/draft scripts.
+      const state = await evaluate(READ_PINE_STATE);
+      if (!state?.api || state.kind === 'saved' || state.kind === 'unknown') {
+        t.skip(`editor holds ${state?.kind || 'unknown'} script "${state?.name}"; not modifying it`);
+        return;
+      }
+      const original = await evaluate(`(function() { var m = ${FIND_MONACO}; return m ? m.editor.getValue() : null; })()`);
+      if (original === null) return;
       const testCode = '//@version=6\nindicator("E2E Test", overlay=true)\nplot(close)';
-      const set = await evaluate(`
-        (function() {
-          var m = ${FIND_MONACO};
-          if (!m) return false;
-          m.editor.setValue(${JSON.stringify(testCode)});
-          return true;
-        })()
-      `);
-      if (set) {
-        const readBack = await evaluate(`
-          (function() { var m = ${FIND_MONACO}; return m ? m.editor.getValue() : null; })()
-        `);
+      try {
+        await evaluate(`(function() { var m = ${FIND_MONACO}; m.editor.setValue(${JSON.stringify(testCode)}); })()`);
+        const readBack = await evaluate(`(function() { var m = ${FIND_MONACO}; return m ? m.editor.getValue() : null; })()`);
         assert.ok(readBack && readBack.includes('E2E Test'), 'Source was set');
+      } finally {
+        await evaluate(`(function() { var m = ${FIND_MONACO}; if (m) m.editor.setValue(${JSON.stringify(original)}); })()`);
       }
     });
 
-    it('pine_compile — add to chart button', async () => {
+    it('pine editor controller — found and identifies the open script', async () => {
       const ready = await ensureEditor();
       if (!ready) return;
-      // Just verify we can find compile buttons
-      const buttons = await evaluate(`
+      const methods = await evaluate(`
         (function() {
-          var btns = document.querySelectorAll('button');
-          var found = [];
-          for (var i = 0; i < btns.length; i++) {
-            var text = btns[i].textContent.trim();
-            if (/add to chart|update on chart|save and add/i.test(text)) {
-              found.push(text);
-            }
-          }
-          return found;
+          var ctrl = ${FIND_PINE_CTRL};
+          if (!ctrl) return null;
+          return ['openNewScript', 'showEditor', 'getScriptIdVersion', 'isModified', 'isDraft', 'setScript', 'saveScript']
+            .filter(function(n) { return typeof ctrl[n] === 'function'; });
         })()
       `);
-      assert.ok(Array.isArray(buttons), 'Button scan works');
+      assert.ok(methods, 'Pine editor controller found via React fiber');
+      for (const m of ['openNewScript', 'showEditor', 'getScriptIdVersion', 'isModified']) {
+        assert.ok(methods.includes(m), `controller has ${m}()`);
+      }
+      const state = await evaluate(READ_PINE_STATE);
+      assert.ok(['saved', 'draft', 'new'].includes(state.kind), `script kind is ${state.kind}`);
+      assert.equal(typeof state.modified, 'boolean');
+    });
+
+    it('pine_compile — add-to-chart button found by data-qa-id (read-only)', async () => {
+      const ready = await ensureEditor();
+      if (!ready) return;
+      const found = await evaluate(`!!document.querySelector('${PINE_SELECTORS.addToChartButton}')`);
+      assert.ok(found, 'add-script-to-chart button found');
     });
 
     it('pine_smart_compile — detect button + check errors', async () => {
@@ -820,47 +829,32 @@ describe('TradingView MCP — Full E2E (70 tools)', () => {
       assert.ok(typeof entries === 'number', 'Console row count returned');
     });
 
-    it('pine_save — Ctrl+S dispatch', async () => {
+    it('pine_save — save button found by data-qa-id, platform shortcut (read-only)', async () => {
       const ready = await ensureEditor();
       if (!ready) return;
-      // Just verify key dispatch doesn't throw
-      await Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 's', code: 'KeyS', windowsVirtualKeyCode: 83 });
-      await Input.dispatchKeyEvent({ type: 'keyUp', key: 's', code: 'KeyS' });
-      await sleep(300);
+      // Do not press Cmd/Ctrl+S here: it would save whatever script is open.
+      const found = await evaluate(`!!document.querySelector('${PINE_SELECTORS.saveButton}')`);
+      assert.ok(found, 'pine-script-save-button found');
+      const platform = await evaluate('navigator.platform');
+      assert.equal(keyModifierForPlatform(platform), /Mac/i.test(platform) ? 4 : 2);
     });
 
-    it('pine_new — find "New" menu items', async () => {
+    it('pine_new / pine_open — script-name dropdown found by data-qa-id (read-only)', async () => {
       const ready = await ensureEditor();
       if (!ready) return;
-      // We just test that the Pine toolbar buttons are findable
-      const hasPineToolbar = await evaluate(`
-        !!(document.querySelector('[class*="pine-editor"] [class*="toolbar"]')
-          || document.querySelector('[class*="editorToolbar"]')
-          || document.querySelector('[class*="layout__area--bottom"] [class*="toolbar"]'))
+      const title = await evaluate(`(function() { var el = document.querySelector('${PINE_SELECTORS.titleButton}'); return el ? el.textContent.trim() : null; })()`);
+      assert.ok(title, 'pine-script-title-button found');
+    });
+
+    it('pine_list_scripts — pine-facade saved list', async () => {
+      const ready = await ensureEditor();
+      if (!ready) return;
+      const count = await evaluate(`
+        fetch('https://pine-facade.tradingview.com/pine-facade/list/?filter=saved', { credentials: 'include' })
+          .then(function(r) { return r.json(); })
+          .then(function(d) { return Array.isArray(d) ? d.length : -1; })
       `);
-      assert.ok(typeof hasPineToolbar === 'boolean', 'Pine toolbar detection works');
-    });
-
-    it('pine_open — script dropdown access', async () => {
-      // Same as pine_new — tests toolbar button access
-      const ready = await ensureEditor();
-      if (!ready) return;
-      const bottomArea = await evaluate(`!!document.querySelector('[class*="layout__area--bottom"]')`);
-      assert.ok(bottomArea, 'Bottom area exists for script dropdown');
-    });
-
-    it('pine_list_scripts — scrape dropdown items', async () => {
-      // Tests the same path as pine_open — dropdown scraping
-      const ready = await ensureEditor();
-      if (!ready) return;
-      // Just verify we can find the bottom area buttons
-      const btnCount = await evaluate(`
-        (function() {
-          var area = document.querySelector('[class*="layout__area--bottom"]');
-          return area ? area.querySelectorAll('button').length : 0;
-        })()
-      `);
-      assert.ok(btnCount >= 0, 'Button count retrieved');
+      assert.ok(count >= 0, 'Saved script list returned');
     });
 
     it('pine_analyze — offline static analysis', async () => {

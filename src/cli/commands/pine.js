@@ -33,12 +33,18 @@ register('pine', {
       },
     }],
     ['compile', {
-      description: 'Smart compile: detect button, compile, check errors',
-      handler: () => core.smartCompile(),
+      description: 'Add/update the open script on the chart and check errors (refuses to save over a saved script unless --allow-save)',
+      options: {
+        'allow-save': { type: 'boolean', description: 'Allow saving edits over the open saved script first' },
+      },
+      handler: (opts) => core.smartCompile({ allow_save: !!opts['allow-save'] }),
     }],
     ['raw-compile', {
-      description: 'Click compile/add button without smart detection',
-      handler: () => core.compile(),
+      description: 'Click the add/update-on-chart button without checking errors',
+      options: {
+        'allow-save': { type: 'boolean', description: 'Allow saving edits over the open saved script first' },
+      },
+      handler: (opts) => core.compile({ allow_save: !!opts['allow-save'] }),
     }],
     ['analyze', {
       description: 'Offline static analysis (no TradingView needed)',
@@ -73,21 +79,36 @@ register('pine', {
       },
     }],
     ['save', {
-      description: 'Save the current Pine Script (Ctrl+S)',
-      handler: () => core.save(),
+      description: 'Save the open script (new scripts: --name, defaults to the indicator() title)',
+      options: {
+        name: { type: 'string', short: 'n', description: 'Name for a new or draft script' },
+      },
+      handler: async (opts) => {
+        const result = await core.save({ name: opts.name });
+        if (result.success === false) throw new Error(result.error);
+        return result;
+      },
     }],
     ['new', {
-      description: 'Create a new blank Pine Script (indicator, strategy, library)',
+      description: 'Create a new untitled script (indicator, strategy, library); the open script is not modified',
+      options: {
+        file: { type: 'string', short: 'f', description: 'Fill the new script with this file' },
+        'discard-unsaved': { type: 'boolean', description: 'Drop unsaved edits in the open script' },
+      },
       handler: (opts, positionals) => {
         const type = positionals[0] || 'indicator';
-        return core.newScript({ type });
+        const source = opts.file ? readFileSync(opts.file, 'utf-8') : undefined;
+        return core.newScript({ type, source, discard_unsaved: !!opts['discard-unsaved'] });
       },
     }],
     ['open', {
-      description: 'Open a saved Pine Script by name',
+      description: 'Switch the editor to a saved script by name; the open script is not modified',
+      options: {
+        'discard-unsaved': { type: 'boolean', description: 'Drop unsaved edits in the open script' },
+      },
       handler: (opts, positionals) => {
         if (!positionals[0]) throw new Error('Script name required. Usage: tv pine open "My Script"');
-        return core.openScript({ name: positionals.join(' ') });
+        return core.openScript({ name: positionals.join(' '), discard_unsaved: !!opts['discard-unsaved'] });
       },
     }],
     ['list', {

@@ -1,51 +1,60 @@
 #!/usr/bin/env node
-// Push scripts/current.pine → TradingView editor, then compile
-import CDP from 'chrome-remote-interface';
+// Push scripts/current.pine → TradingView Pine editor, then add/update it on the chart.
+//
+//   node scripts/pine_push.js                     push into the script open in the editor
+//   node scripts/pine_push.js --new [type]        create a new untitled script first (indicator|strategy|library)
+//   node scripts/pine_push.js --allow-save        allow saving the edits over the open SAVED script
+//                                                 (TradingView saves a new version when a saved script is updated on the chart)
+//   node scripts/pine_push.js --new --save "Name" create, save under a name, then add to chart
 import { readFileSync } from 'fs';
+import { parseArgs } from 'node:util';
+import { newScript, setSource, save, smartCompile } from '../src/core/pine.js';
+import { disconnect } from '../src/connection.js';
+
+const { values, positionals } = parseArgs({
+  options: {
+    new: { type: 'boolean' },
+    'allow-save': { type: 'boolean' },
+    save: { type: 'string' },
+  },
+  allowPositionals: true,
+});
 
 const srcPath = new URL('../scripts/current.pine', import.meta.url).pathname.replace(/^\/([A-Z]:)/, '$1');
 const src = readFileSync(srcPath, 'utf-8');
 
-const targets = await (await fetch('http://localhost:9222/json/list')).json();
-const t = targets.find(t => t.url?.includes('tradingview.com'));
-if (!t) { console.error('No TradingView target'); process.exit(1); }
-const c = await CDP({ host: 'localhost', port: 9222, target: t.id });
-await c.Runtime.enable();
+const describe = (s) => s ? `"${s.name}" (${s.kind}${s.script_id ? `, ${s.script_id} v${s.version}` : ''}${s.modified ? ', unsaved edits' : ''})` : 'unknown script';
 
-// Inject source
-const escaped = JSON.stringify(src);
-const set = (await c.Runtime.evaluate({
-  expression: `(function(){var c=document.querySelector(".monaco-editor.pine-editor-monaco");if(!c)return false;var el=c;var fk;for(var i=0;i<20;i++){if(!el)break;fk=Object.keys(el).find(function(k){return k.startsWith("__reactFiber$")});if(fk)break;el=el.parentElement}if(!fk)return false;var cur=el[fk];for(var d=0;d<15;d++){if(!cur)break;if(cur.memoizedProps&&cur.memoizedProps.value&&cur.memoizedProps.value.monacoEnv){var env=cur.memoizedProps.value.monacoEnv;if(env.editor&&typeof env.editor.getEditors==="function"){var eds=env.editor.getEditors();if(eds.length>0){eds[0].setValue(${escaped});return true}}}cur=cur.return}return false})()`,
-  returnByValue: true,
-})).result?.value;
+try {
+  if (values.new) {
+    const type = positionals[0] || 'indicator';
+    const created = await newScript({ type, source: src });
+    console.log(`Created new untitled ${type} with ${src.split('\n').length} lines (previous script ${describe(created.previous_script)} untouched)`);
+  } else {
+    const set = await setSource({ source: src });
+    console.log(`Pushed ${set.lines_set} lines → ${describe(set.script)}`);
+    if (set.warning) console.log(`⚠️  ${set.warning}`);
+  }
 
-if (!set) { console.error('Could not inject into Pine editor'); await c.close(); process.exit(1); }
-console.log(`Pushed ${src.split('\n').length} lines → Pine editor`);
+  if (values.save !== undefined) {
+    const saved = await save({ name: values.save || undefined });
+    if (!saved.success) throw new Error(saved.error);
+    console.log(`Saved → ${describe(saved.script)}`);
+  }
 
-// Click compile button
-const clicked = (await c.Runtime.evaluate({
-  expression: '(function(){var btns=document.querySelectorAll("button");for(var i=0;i<btns.length;i++){var t=btns[i].textContent.trim();if(/save and add to chart/i.test(t)){btns[i].click();return t}if(/^(Add to chart|Update on chart)/i.test(t)){btns[i].click();return t}}for(var i=0;i<btns.length;i++){if(btns[i].className.indexOf("saveButton")!==-1&&btns[i].offsetParent!==null){btns[i].click();return "Pine Save"}}return null})()',
-  returnByValue: true,
-})).result?.value;
+  const r = await smartCompile({ allow_save: !!values['allow-save'] });
+  console.log(`Compile: ${r.button_clicked} → ${describe(r.script)}`);
+  if (r.warning) console.log(`⚠️  ${r.warning}`);
 
-console.log('Compile:', clicked || 'keyboard fallback');
-if (!clicked) {
-  await c.Input.dispatchKeyEvent({ type: 'keyDown', modifiers: 2, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13 });
-  await c.Input.dispatchKeyEvent({ type: 'keyUp', key: 'Enter', code: 'Enter' });
+  if (!r.has_errors) {
+    console.log('✅ Compiled clean — 0 errors');
+  } else {
+    console.log(`❌ ${r.errors.length} errors:`);
+    r.errors.forEach(e => console.log(`  Line ${e.line}: ${e.message}`));
+  }
+} catch (err) {
+  console.error(`❌ ${err.message}`);
+  process.exitCode = 1;
+} finally {
+  await disconnect();
 }
-
-// Wait then check errors
-await new Promise(r => setTimeout(r, 3000));
-const errors = (await c.Runtime.evaluate({
-  expression: '(function(){var c=document.querySelector(".monaco-editor.pine-editor-monaco");if(!c)return[];var el=c;var fk;for(var i=0;i<20;i++){if(!el)break;fk=Object.keys(el).find(function(k){return k.startsWith("__reactFiber$")});if(fk)break;el=el.parentElement}if(!fk)return[];var cur=el[fk];for(var d=0;d<15;d++){if(!cur)break;if(cur.memoizedProps&&cur.memoizedProps.value&&cur.memoizedProps.value.monacoEnv){var env=cur.memoizedProps.value.monacoEnv;if(env.editor&&typeof env.editor.getEditors==="function"){var eds=env.editor.getEditors();if(eds.length>0){var model=eds[0].getModel();var markers=env.editor.getModelMarkers({resource:model.uri});return markers.map(function(m){return{line:m.startLineNumber,msg:m.message}})}}}cur=cur.return}return[]})()',
-  returnByValue: true,
-})).result?.value || [];
-
-if (errors.length === 0) {
-  console.log('✅ Compiled clean — 0 errors');
-} else {
-  console.log(`❌ ${errors.length} errors:`);
-  errors.forEach(e => console.log(`  Line ${e.line}: ${e.msg}`));
-}
-
-await c.close();

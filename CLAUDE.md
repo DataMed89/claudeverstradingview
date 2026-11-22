@@ -42,14 +42,26 @@ Use `study_filter` parameter to target a specific indicator by name substring (e
 - `chart_set_visible_range` → zoom to exact date range (unix timestamps)
 
 ### "Work on Pine Script"
-1. `pine_set_source` → inject code into editor
-2. `pine_smart_compile` → compile with auto-detection + error check
-3. `pine_get_errors` → read compilation errors
-4. `pine_get_console` → read log.info() output
-5. `pine_get_source` → read current code back (WARNING: can be very large for complex scripts)
-6. `pine_save` → save to TradingView cloud
-7. `pine_new` → create blank indicator/strategy/library
-8. `pine_open` → load a saved script by name
+New script (never reuse whatever script happens to be open):
+1. `pine_new` with `type` and `source` → creates a NEW untitled script; the open script is not touched
+2. `pine_save` with `name` → saves it (refused if another saved script already has that name); waits until saved
+3. `pine_smart_compile` → add to chart + error check. Save first, or the chart is linked to a draft (version 0.1)
+
+Edit an existing script:
+1. `pine_open` with `name` → switches the editor to that saved script (refuses if the open script has unsaved edits; `discard_unsaved: true` overrides)
+2. `pine_set_source` → replaces the source of the script that is OPEN (check `script.name` in the result)
+3. `pine_smart_compile` with `allow_save: true` → TradingView saves edits to a saved script as a new version when it is added/updated on the chart, so this refuses without `allow_save`
+
+Other tools:
+- `pine_get_errors` → read compilation errors
+- `pine_get_console` → read log.info() output
+- `pine_get_source` → read current code back (WARNING: can be very large for complex scripts)
+- `pine_list_scripts` → saved scripts
+
+Safety rules:
+- `pine_set_source` and `pine_save` act on whichever script is open. Check `script` (name, script_id, kind: saved/draft/new) in results before saving.
+- Never pass `allow_save` or `discard_unsaved` unless the user asked to change that saved script or drop those edits.
+- Buttons are found by `data-qa-id` (any UI language). The save shortcut is Cmd+S on macOS, Ctrl+S elsewhere.
 
 ### "Practice trading with replay"
 1. `replay_start` with `date: "2025-03-01"` → enter replay mode
